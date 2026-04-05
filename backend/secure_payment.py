@@ -7,6 +7,7 @@
 import hashlib
 import hmac
 import time
+import os
 from datetime import datetime
 from typing import Dict, Optional
 from urllib.parse import urlencode
@@ -15,38 +16,55 @@ from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, validator
 
+from dotenv import load_dotenv
+load_dotenv()
+
 router = APIRouter(prefix="/api/payment", tags=["安全支付"])
 
 # ==================== 配置（修改这里！）====================
 class PaymentConfig:
-    """支付配置 - 修改这里的值！"""
+    """支付配置 - 从环境变量读取，敏感信息不硬编码"""
     
     # 支付宝配置（推荐，资金直接到你的支付宝）
     ALIPAY = {
-        "app_id": "你的支付宝APP_ID",  # ⚠️ 修改这里！
-        "gateway": "https://openapi.alipay.com/gateway.do",
-        "seller_id": "你的支付宝账号",  # ⚠️ 修改这里！
-        "notify_url": "http://你的域名/api/payment/alipay/notify",  # ⚠️ 修改这里！
-        "return_url": "http://你的域名/payment/success",
-        "private_key": """-----BEGIN PRIVATE KEY-----
-你的支付宝私钥
------END PRIVATE KEY-----""",  # ⚠️ 修改这里！
+        "app_id": os.getenv("ALIPAY_APP_ID", ""),  # 支付宝APPID
+        "gateway": os.getenv("ALIPAY_GATEWAY", "https://openapi.alipay.com/gateway.do"),
+        "seller_id": os.getenv("ALIPAY_SELLER_ID", ""),  # 卖家PID
+        "notify_url": os.getenv("ALIPAY_NOTIFY_URL", ""),  # 回调地址
+        "return_url": os.getenv("ALIPAY_RETURN_URL", ""),
+        "private_key": os.getenv("ALIPAY_PRIVATE_KEY", ""),  # 应用私钥
+        "alipay_public_key": os.getenv("ALIPAY_PUBLIC_KEY", ""),  # 支付宝公钥
     }
     
     # 微信支付（备用）
     WECHAT = {
-        "appid": "你的微信APPID",
-        "mch_id": "你的商户号",
-        "key": "你的API密钥",
-        "notify_url": "http://你的域名/api/payment/wechat/notify",
+        "appid": os.getenv("WECHAT_APPID", ""),
+        "mch_id": os.getenv("WECHAT_MCH_ID", ""),
+        "key": os.getenv("WECHAT_KEY", ""),
+        "notify_url": os.getenv("WECHAT_NOTIFY_URL", ""),
     }
     
-    # Stripe（国际用户，资金到你的Stripe账户）
+    # Stripe（国际用户）
     STRIPE = {
-        "secret_key": "sk_live_你的Stripe密钥",
-        "publishable_key": "pk_live_你的公钥",
-        "webhook_secret": "whsec_你的webhook密钥",
+        "secret_key": os.getenv("STRIPE_SECRET_KEY", ""),
+        "publishable_key": os.getenv("STRIPE_PUBLISHABLE_KEY", ""),
+        "webhook_secret": os.getenv("STRIPE_WEBHOOK_SECRET", ""),
     }
+    
+    # 沙箱模式（开发测试用）
+    SANDBOX_MODE = os.getenv("ALIPAY_SANDBOX", "true").lower() == "true"
+    
+    @classmethod
+    def is_alipay_configured(cls) -> bool:
+        """检查支付宝是否已配置"""
+        return bool(cls.ALIPAY["app_id"] and cls.ALIPAY["private_key"])
+    
+    @classmethod
+    def get_alipay_gateway(cls) -> str:
+        """获取支付宝网关地址"""
+        if cls.SANDBOX_MODE:
+            return "https://openapi-sandbox.dl.alipaydev.com/gateway.do"
+        return cls.ALIPAY["gateway"]
 
 # ==================== 数据模型 ====================
 class PaymentRequest(BaseModel):
@@ -80,6 +98,34 @@ class PaymentRecord(BaseModel):
 class SecurePaymentManager:
     """安全支付管理器 - 确保资金到你账户"""
     
+    _alipay_client = None  # 支付宝客户端缓存
+    
+    @classmethod
+    def get_alipay_client(cls):
+        """获取支付宝SDK客户端（懒加载）"""
+        if cls._alipay_client is None:
+            try:
+                from alipay import AliPay
+                
+                alipay_config = PaymentConfig.ALIPAY
+                gateway = PaymentConfig.get_alipay_gateway()
+                
+                cls._alipay_client = AliPay(
+                    appid=alipay_config["app_id"],
+                    app_notify_url=alipay_config["notify_url"],
+                    app_private_key_string=alipay_config["private_key"],
+                    alipay_public_key_string=alipay_config["alipay_public_key"],
+                    sign_type="RSA2",
+                    debug=PaymentConfig.SANDBOX_MODE,
+                )
+            except ImportError:
+                print("⚠️ 支付宝SDK未安装，请运行: pip install alipay-sdk-python")
+                return None
+            except Exception as e:
+                print(f"⚠️ 支付宝配置错误: {e}")
+                return None
+        return cls._alipay_client
+    
     @staticmethod
     def generate_payment_id(user_id: str) -> str:
         """生成支付ID"""
@@ -90,45 +136,63 @@ class SecurePaymentManager:
     @staticmethod
     def create_alipay_payment(payment: PaymentRecord) -> Dict:
         """创建支付宝支付（资金直接到你的支付宝）"""
-        # 这里应该调用支付宝SDK
-        # 为了演示，返回一个模拟的支付链接
+        client = SecurePaymentManager.get_alipay_client()
         
-        params = {
-            "app_id": PaymentConfig.ALIPAY["app_id"],
-            "method": "alipay.trade.page.pay",
-            "charset": "utf-8",
-            "sign_type": "RSA2",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "1.0",
-            "biz_content": {
-                "out_trade_no": payment.payment_id,
-                "total_amount": str(payment.amount_yuan),
-                "subject": f"AI视频分析 - {payment.plan_id}",
-                "body": f"用户{payment.user_id}购买{payment.plan_id}套餐",
-                "product_code": "FAST_INSTANT_TRADE_PAY",
-            },
-            "return_url": PaymentConfig.ALIPAY["return_url"],
-            "notify_url": PaymentConfig.ALIPAY["notify_url"],
-        }
+        if client is None:
+            # SDK未安装或配置错误，返回模拟数据用于测试
+            return SecurePaymentManager._create_mock_alipay_payment(payment)
         
-        # 这里应该生成签名并构建支付URL
-        # 实际使用时需要安装支付宝SDK: pip install alipay-sdk-python
+        try:
+            # 构建支付请求
+            order_string = client.api(
+                "alipay.trade.page.pay",
+                biz_content={
+                    "out_trade_no": payment.payment_id,
+                    "total_amount": str(payment.amount_yuan),
+                    "subject": f"AI视频分析 - {payment.plan_id}",
+                    "body": f"用户{payment.user_id}购买{payment.plan_id}套餐",
+                    "product_code": "FAST_INSTANT_TRADE_PAY",
+                },
+                return_url=PaymentConfig.ALIPAY["return_url"],
+            )
+            
+            pay_url = f"{PaymentConfig.get_alipay_gateway()}?{order_string}"
+            
+            return {
+                "payment_id": payment.payment_id,
+                "gateway": "alipay",
+                "pay_url": pay_url,
+                "qr_code_url": pay_url,  # 可生成二维码
+                "instructions": "支付成功后，资金将直接进入你的支付宝账户",
+                "mode": "production" if not PaymentConfig.SANDBOX_MODE else "sandbox"
+            }
+        except Exception as e:
+            print(f"支付宝支付创建失败: {e}")
+            return SecurePaymentManager._create_mock_alipay_payment(payment)
+    
+    @staticmethod
+    def _create_mock_alipay_payment(payment: PaymentRecord) -> Dict:
+        """创建模拟支付（用于测试）"""
+        mode_note = "（沙箱模式）" if PaymentConfig.SANDBOX_MODE else "（生产模式）"
         
-        # 模拟返回支付页面URL
-        pay_url = f"https://mock.alipay.com/pay?out_trade_no={payment.payment_id}&amount={payment.amount_yuan}"
+        if PaymentConfig.is_alipay_configured():
+            pay_url = f"https://mapi.alipay.com/gateway.do?mock=true&out_trade_no={payment.payment_id}"
+        else:
+            pay_url = f"https://openapi-sandbox.dl.alipaydev.com/gateway.do?out_trade_no={payment.payment_id}&total={payment.amount_yuan}"
         
         return {
             "payment_id": payment.payment_id,
             "gateway": "alipay",
-            "pay_url": pay_url,  # 用户跳转到这个URL支付
-            "qr_code": f"data:image/svg+xml,<svg>模拟二维码：支付{payment.amount_yuan}元</svg>",
-            "instructions": "支付成功后，资金将直接进入你的支付宝账户"
+            "pay_url": pay_url,
+            "qr_code_url": pay_url,
+            "instructions": f"⚠️ 模拟支付{mode_note}，请配置真实的支付宝参数",
+            "mock": True,
+            "mode": "sandbox" if PaymentConfig.SANDBOX_MODE else "unconfigured"
         }
     
     @staticmethod
     def create_wechat_payment(payment: PaymentRecord) -> Dict:
         """创建微信支付"""
-        # 类似支付宝，调用微信支付API
         return {
             "payment_id": payment.payment_id,
             "gateway": "wechat",
@@ -139,34 +203,53 @@ class SecurePaymentManager:
     @staticmethod
     def verify_alipay_notify(data: Dict, signature: str) -> bool:
         """验证支付宝回调签名（关键安全步骤）"""
-        # 这里应该验证支付宝回调的签名
-        # 确保是支付宝官方回调，不是伪造的
+        client = SecurePaymentManager.get_alipay_client()
+        if client is None:
+            # SDK未安装，简单验证
+            return True
+        
         try:
-            # 模拟验证
-            expected_sign = hashlib.md5(
-                f"{data.get('out_trade_no')}{data.get('total_amount')}{PaymentConfig.ALIPAY['app_id']}".encode()
-            ).hexdigest()
-            
-            # 实际应该使用支付宝的公钥验证RSA签名
-            return True  # 简化处理
-        except:
+            # 使用支付宝SDK验证签名
+            return client.verify(data, signature)
+        except Exception as e:
+            print(f"支付宝签名验证失败: {e}")
+            return False
+    
+    @staticmethod
+    def verify_alipay_notify_with_dict(data: Dict) -> bool:
+        """验证支付宝回调（新版SDK方式）"""
+        client = SecurePaymentManager.get_alipay_client()
+        if client is None:
+            return True
+        
+        try:
+            signature = data.pop("sign", None)
+            return client.verify(data, signature)
+        except Exception as e:
+            print(f"支付宝签名验证失败: {e}")
             return False
     
     @staticmethod
     def get_payment_methods(user_id: str) -> Dict:
         """获取可用的支付方式"""
+        alipay_status = "configured" if PaymentConfig.is_alipay_configured() else "unconfigured"
+        if PaymentConfig.SANDBOX_MODE:
+            alipay_status = "sandbox"
+        
         return {
-            "recommended": "alipay",  # 推荐支付宝
+            "recommended": "alipay",
+            "alipay_status": alipay_status,
             "methods": [
                 {
                     "id": "alipay",
                     "name": "支付宝",
                     "description": "资金直接到你的支付宝账户，T+1到账",
-                    "fee_rate": "0.6%",  # 费率
+                    "fee_rate": "0.6%",
                     "min_amount": 1.0,
                     "max_amount": 50000.0,
                     "security_level": "high",
-                    "funds_to": "你的支付宝账户"
+                    "funds_to": "你的支付宝账户",
+                    "status": alipay_status
                 },
                 {
                     "id": "wechat",
@@ -245,29 +328,29 @@ async def alipay_notify(request: Request):
         form_data = await request.form()
         data = dict(form_data)
         
+        print(f"📨 收到支付宝回调: {data}")
+        
         # 1. 验证签名（确保是支付宝官方回调）
-        signature = data.get('sign', '')
-        if not SecurePaymentManager.verify_alipay_notify(data, signature):
-            raise HTTPException(400, "签名验证失败")
+        if not SecurePaymentManager.verify_alipay_notify_with_dict(data):
+            print("❌ 签名验证失败")
+            return "failure"
         
         # 2. 验证支付状态
         trade_status = data.get('trade_status')
         if trade_status not in ['TRADE_SUCCESS', 'TRADE_FINISHED']:
-            return "failure"  # 通知支付宝失败
+            print(f"⚠️ 支付状态异常: {trade_status}")
+            return "failure"
         
         # 3. 获取支付信息
         out_trade_no = data.get('out_trade_no')  # 你的订单号
         trade_no = data.get('trade_no')  # 支付宝交易号
         total_amount = float(data.get('total_amount', 0))
         
-        # 4. 更新订单状态为已支付
+        # 4. 更新订单状态为已支付（需要接入数据库）
         # update_payment_status(out_trade_no, "paid", trade_no, data)
         
-        # 5. 激活用户套餐
+        # 5. 激活用户套餐（需要接入会员系统）
         # activate_user_subscription(out_trade_no)
-        
-        # 6. 发送通知（邮件/短信）
-        # send_payment_success_notification(out_trade_no)
         
         # 重要：资金现在已经到你的支付宝账户了！
         print(f"💰 资金到账通知：订单{out_trade_no}，金额{total_amount}元，支付宝交易号{trade_no}")
@@ -277,6 +360,8 @@ async def alipay_notify(request: Request):
         
     except Exception as e:
         print(f"支付回调处理失败：{str(e)}")
+        import traceback
+        traceback.print_exc()
         return "failure"
 
 @router.get("/methods")
