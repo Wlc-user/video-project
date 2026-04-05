@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data
+data/downloads/
+data/uploads/
+data/fingerprints/
+*.mp4
+*.avi
+*.mkv
+*.flv
+*.webm
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+
+# Environment
+.env.local
+.env.*.local
+
+# Temporary
+*.tmp
+*.temp
