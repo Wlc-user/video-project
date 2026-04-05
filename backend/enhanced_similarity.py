@@ -113,6 +113,14 @@ class EnhancedSimilarityDetector:
 
     def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """计算余弦相似度"""
+        # 确保维度一致
+        min_len = min(len(vec1), len(vec2))
+        if min_len == 0:
+            return 0.0
+        
+        vec1 = np.array(vec1[:min_len])
+        vec2 = np.array(vec2[:min_len])
+        
         dot = np.dot(vec1, vec2)
         norm1 = np.linalg.norm(vec1)
         norm2 = np.linalg.norm(vec2)
@@ -124,8 +132,21 @@ class EnhancedSimilarityDetector:
         """比较颜色直方图"""
         if not hist1 or not hist2:
             return 0.0
+        
+        # 处理维度不匹配
         arr1 = np.array(hist1)
         arr2 = np.array(hist2)
+        
+        # 如果维度不同，尝试对齐
+        if len(arr1) != len(arr2):
+            # 使用前min_len个元素
+            min_len = min(len(arr1), len(arr2))
+            arr1 = arr1[:min_len]
+            arr2 = arr2[:min_len]
+        
+        if len(arr1) == 0:
+            return 0.0
+            
         return self.cosine_similarity(arr1, arr2) * 100
 
     def compare_audio_fingerprints(self, audio1: Optional[Dict], audio2: Optional[Dict]) -> Tuple[float, str]:
@@ -187,10 +208,12 @@ class EnhancedSimilarityDetector:
         )
 
         # 5. 颜色直方图比较
-        color_sim = self.compare_color_histograms(
-            fp1.get("color_histogram"),
-            fp2.get("color_histogram")
-        )
+        color_sim = 0.0
+        if fp1.get("color_histogram") and fp2.get("color_histogram"):
+            color_sim = self.compare_color_histograms(
+                fp1.get("color_histogram"),
+                fp2.get("color_histogram")
+            )
 
         # 6. 音频指纹比较
         audio_sim, audio_status = self.compare_audio_fingerprints(

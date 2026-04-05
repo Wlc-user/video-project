@@ -28,6 +28,11 @@ try:
     import librosa
     import soundfile as sf
     HAS_AUDIO = True
+    
+    # 配置 librosa 使用 audioread（兼容性好）
+    import os
+    os.environ['LIBROSA_CACHE_DIR'] = 'temp/audio_cache'
+    
 except ImportError:
     HAS_AUDIO = False
     print("提示: librosa 未安装，音频指纹功能不可用")
@@ -196,8 +201,14 @@ class EnhancedVideoFingerprint:
             return None
 
         try:
-            # 提取音频
-            y, sr = librosa.load(video_path, sr=22050, duration=30)
+            # 提取音频（使用resampy进行重采样）
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                y, sr = librosa.load(video_path, sr=22050, duration=30)
+
+            if y is None or len(y) == 0:
+                return None
 
             # 计算MFCC特征
             mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
@@ -207,6 +218,10 @@ class EnhancedVideoFingerprint:
             spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
             sc_mean = np.mean(spectral_centroid)
 
+            # 计算色度特征
+            chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+            chroma_mean = np.mean(chroma, axis=1)
+
             # 音频指纹hash
             audio_hash = hashlib.md5(mfcc_mean.tobytes()).hexdigest()[:32]
 
@@ -214,11 +229,12 @@ class EnhancedVideoFingerprint:
                 "audio_hash": audio_hash,
                 "mfcc": mfcc_mean.tolist(),
                 "spectral_centroid": float(sc_mean),
+                "chroma": chroma_mean.tolist(),
                 "duration": float(librosa.get_duration(y=y, sr=sr)),
                 "sample_rate": sr
             }
         except Exception as e:
-            print(f"音频提取失败: {e}")
+            # 音频提取失败不影响主功能，静默返回None
             return None
 
     def generate_video_fingerprint(self, video_path: str) -> Dict:

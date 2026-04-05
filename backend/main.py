@@ -181,6 +181,7 @@ from industrial_business import router as business_router  # 工业商业模式
 from secure_payment import router as secure_payment_router  # 安全支付
 from api_copyright import router as copyright_router
 from api_membership import router as membership_router  # 版权保护
+from api_enhanced_detection import router as enhanced_detection_router  # 增强版侵权检测（会员专享）
 
 app.include_router(summarize_router)
 app.include_router(auth_router)
@@ -193,6 +194,7 @@ app.include_router(business_router)
 app.include_router(secure_payment_router)  # 新增安全支付
 app.include_router(copyright_router)  # 新增版权保护
 app.include_router(membership_router)  # 新增会员服务
+app.include_router(enhanced_detection_router)  # 增强版侵权检测（会员专享）
 
 # 添加静态文件服务
 from fastapi.staticfiles import StaticFiles
