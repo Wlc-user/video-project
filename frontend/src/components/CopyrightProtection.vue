@@ -247,7 +247,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 
-const API_BASE = '/api/copyright'
+// 开发环境直接请求后端，生产环境用代理
+const API_BASE = import.meta.env.DEV ? 'http://127.0.0.1:8000/api/copyright' : '/api/copyright'
 
 // 标签页
 const tabs = [
@@ -287,18 +288,26 @@ async function uploadFingerprint(file) {
   const formData = new FormData()
   formData.append('video', file)
 
+  console.log('上传文件:', file.name, file.size, 'bytes')
+
   try {
     const res = await fetch(`${API_BASE}/fingerprint/generate`, {
       method: 'POST',
       body: formData
     })
-    const data = await res.json()
+    
+    console.log('响应状态:', res.status)
+    const text = await res.text()
+    console.log('响应内容:', text)
+    
+    const data = JSON.parse(text)
     if (data.status === 'success') {
       fingerprintResult.value = data
     } else {
       alert('生成失败: ' + (data.detail || '未知错误'))
     }
   } catch (err) {
+    console.error('上传错误:', err)
     alert('生成失败: ' + err.message)
   } finally {
     fingerprintLoading.value = false
@@ -335,18 +344,26 @@ async function detectPlagiarism(file) {
   const formData = new FormData()
   formData.append('video', file)
 
+  console.log('检测文件:', file.name, file.size, 'bytes')
+
   try {
     const res = await fetch(`${API_BASE}/detect`, {
       method: 'POST',
       body: formData
     })
-    const data = await res.json()
+    
+    console.log('响应状态:', res.status)
+    const text = await res.text()
+    console.log('响应内容:', text)
+    
+    const data = JSON.parse(text)
     if (data.status === 'success') {
       detectResult.value = data
     } else {
-      alert('检测失败: ' + (data.detail || '未知错误'))
+      alert('检测失败: ' + (data.detail || JSON.stringify(data)))
     }
   } catch (err) {
+    console.error('检测错误:', err)
     alert('检测失败: ' + err.message)
   } finally {
     detectLoading.value = false

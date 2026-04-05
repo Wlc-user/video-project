@@ -7,10 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from downloader import VideoDownloader
 from douyin import DouyinParser, is_douyin_url
@@ -48,6 +50,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# 异常处理中间件
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理"""
+    import traceback
+    print(f"请求错误: {request.url}")
+    print(f"错误详情: {exc}")
+    traceback.print_exc()
+    
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": str(exc.detail)}
+        )
+    
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)}
+    )
 
 
 class ParseRequest(BaseModel):
