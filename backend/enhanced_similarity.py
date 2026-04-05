@@ -37,11 +37,14 @@ class EnhancedSimilarityDetector:
 
         # 检测权重（可调整）
         self.weights = {
-            "phash": 0.30,      # pHash权重
-            "dhash": 0.20,      # dHash权重
-            "sift": 0.25,       # SIFT特征权重
-            "color": 0.10,      # 颜色直方图权重
-            "audio": 0.15,     # 音频指纹权重
+            "phash": 0.25,       # pHash权重
+            "dhash": 0.15,       # dHash权重
+            "wavelet_hash": 0.10,  # 小波哈希权重 (新增)
+            "lbp": 0.08,          # LBP纹理权重 (新增)
+            "sift": 0.15,         # SIFT特征权重
+            "color": 0.10,        # 颜色直方图权重
+            "audio": 0.12,        # 音频指纹权重
+            "edge": 0.05,         # 边缘直方图权重 (新增)
         }
 
     def _load_all_fingerprints(self):
@@ -92,16 +95,24 @@ class EnhancedSimilarityDetector:
 
     def compare_sift_features(self, sift1: List[str], sift2: List[str]) -> Tuple[int, float]:
         """比较SIFT特征哈希"""
+        # 处理缺失字段
+        if not sift1 or not sift2 or sift1 == [""] or sift2 == [""]:
+            return 999, 0.0
         return self.compare_frame_hashes(sift1, sift2)
 
     def compare_keyframes(self, kf1: List[Dict], kf2: List[Dict]) -> float:
         """比较关键帧序列"""
-        if not kf1 or not kf2:
+        # 处理缺失或空数据
+        if not kf1 or not kf2 or kf1 == [{}] or kf2 == [{}]:
             return 0.0
 
         matches = 0
         for k1 in kf1:
+            if not k1:
+                continue
             for k2 in kf2:
+                if not k2:
+                    continue
                 # 比较位置和内容
                 pos_dist = abs(k1.get("position", 0) - k2.get("position", 0))
                 phash_dist = self.hamming_distance(k1.get("phash", ""), k2.get("phash", ""))
@@ -109,7 +120,7 @@ class EnhancedSimilarityDetector:
                     matches += 1
                     break
 
-        return (matches / max(len(kf1), len(kf2))) * 100
+        return (matches / max(len(kf1), len(kf2), 1)) * 100
 
     def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """计算余弦相似度"""
@@ -130,23 +141,26 @@ class EnhancedSimilarityDetector:
 
     def compare_color_histograms(self, hist1: List, hist2: List) -> float:
         """比较颜色直方图"""
-        if not hist1 or not hist2:
+        # 处理缺失或空数据
+        if not hist1 or not hist2 or hist1 == [] or hist2 == []:
             return 0.0
-        
+
         # 处理维度不匹配
         arr1 = np.array(hist1)
         arr2 = np.array(hist2)
-        
+
         # 如果维度不同，尝试对齐
         if len(arr1) != len(arr2):
             # 使用前min_len个元素
             min_len = min(len(arr1), len(arr2))
+            if min_len == 0:
+                return 0.0
             arr1 = arr1[:min_len]
             arr2 = arr2[:min_len]
-        
+
         if len(arr1) == 0:
             return 0.0
-            
+
         return self.cosine_similarity(arr1, arr2) * 100
 
     def compare_audio_fingerprints(self, audio1: Optional[Dict], audio2: Optional[Dict]) -> Tuple[float, str]:
@@ -175,6 +189,64 @@ class EnhancedSimilarityDetector:
 
         return combined_sim, "audio_similar" if combined_sim > 60 else "audio_different"
 
+    def compare_wavelet_hashes(self, whash1: str, whash2: str) -> Tuple[int, float]:
+        """比较小波哈希 (对模糊和水印更鲁棒)"""
+        dist = self.hamming_distance(whash1, whash2)
+        sim = max(0, 100 - dist)
+        return dist, sim
+
+    def compare_lbp_features(self, lbp1: List, lbp2: List) -> float:
+        """比较LBP纹理特征"""
+        if not lbp1 or not lbp2 or lbp1 == [] or lbp2 == []:
+            return 0.0
+        return self.cosine_similarity(np.array(lbp1), np.array(lbp2)) * 100
+
+    def compare_edge_histograms(self, edge1: List, edge2: List) -> float:
+        """比较边缘直方图"""
+        if not edge1 or not edge2 or edge1 == [] or edge2 == []:
+            return 0.0
+        return self.cosine_similarity(np.array(edge1), np.array(edge2)) * 100
+
+    def compare_texture_features(self, tex1: Dict, tex2: Dict) -> float:
+        """比较纹理特征"""
+        if not tex1 or not tex2:
+            return 0.0
+        vec1 = np.array(list(tex1.values()))
+        vec2 = np.array(list(tex2.values()))
+        return self.cosine_similarity(vec1, vec2) * 100
+
+    def compare_enhanced_features(self, fp1: Dict, fp2: Dict) -> Dict:
+        """比较增强特征（SIFT, wavelet, LBP等）"""
+        results = {}
+
+        # 小波哈希
+        if "enhanced_features" in fp1 and "enhanced_features" in fp2:
+            whash1 = fp1["enhanced_features"].get("video_level", {}).get("wavelet_hash_combined", "")
+            whash2 = fp2["enhanced_features"].get("video_level", {}).get("wavelet_hash_combined", "")
+            if whash1 and whash2:
+                dist, sim = self.compare_wavelet_hashes(whash1, whash2)
+                results["wavelet_hash"] = {"distance": dist, "similarity": sim}
+
+            # LBP
+            lbp1 = fp1["enhanced_features"].get("video_level", {}).get("lbp_mean", [])
+            lbp2 = fp2["enhanced_features"].get("video_level", {}).get("lbp_mean", [])
+            if lbp1 and lbp2:
+                results["lbp"] = {"similarity": self.compare_lbp_features(lbp1, lbp2)}
+
+            # 边缘直方图
+            edge1 = fp1["enhanced_features"].get("video_level", {}).get("edge_mean", [])
+            edge2 = fp2["enhanced_features"].get("video_level", {}).get("edge_mean", [])
+            if edge1 and edge2:
+                results["edge"] = {"similarity": self.compare_edge_histograms(edge1, edge2)}
+
+            # 纹理特征
+            tex1 = fp1["enhanced_features"].get("video_level", {}).get("avg_texture", {})
+            tex2 = fp2["enhanced_features"].get("video_level", {}).get("avg_texture", {})
+            if tex1 and tex2:
+                results["texture"] = {"similarity": self.compare_texture_features(tex1, tex2)}
+
+        return results
+
     def compare_videos(self, video1_path: str, video2_path: str) -> Dict:
         """比较两个视频的相似度（多模态融合）"""
         print(f"增强版比较: {video1_path} vs {video2_path}")
@@ -197,28 +269,26 @@ class EnhancedSimilarityDetector:
 
         # 3. SIFT特征比较
         sift_dist, sift_sim = self.compare_sift_features(
-            fp1.get("sift_hashes", []),
-            fp2.get("sift_hashes", [])
+            fp1.get("sift_hashes") or [],
+            fp2.get("sift_hashes") or []
         )
 
         # 4. 关键帧比较
         keyframe_sim = self.compare_keyframes(
-            fp1.get("keyframes", []),
-            fp2.get("keyframes", [])
+            fp1.get("keyframes") or [],
+            fp2.get("keyframes") or []
         )
 
         # 5. 颜色直方图比较
-        color_sim = 0.0
-        if fp1.get("color_histogram") and fp2.get("color_histogram"):
-            color_sim = self.compare_color_histograms(
-                fp1.get("color_histogram"),
-                fp2.get("color_histogram")
-            )
+        color_sim = self.compare_color_histograms(
+            fp1.get("color_histogram") or [],
+            fp2.get("color_histogram") or []
+        )
 
         # 6. 音频指纹比较
         audio_sim, audio_status = self.compare_audio_fingerprints(
-            fp1.get("audio_fingerprint"),
-            fp2.get("audio_fingerprint")
+            fp1.get("audio_fingerprint") or None,
+            fp2.get("audio_fingerprint") or None
         )
 
         # 多模态融合
@@ -288,14 +358,15 @@ class EnhancedSimilarityDetector:
                 db_fingerprint.get("frame_dhashes", [])
             )
 
-            sift_sim = self.compare_sift_features(
-                new_fingerprint.get("sift_hashes", []),
-                db_fingerprint.get("sift_hashes", [])
-            )[1]
+            sift_result = self.compare_sift_features(
+                new_fingerprint.get("sift_hashes", []) or [],
+                db_fingerprint.get("sift_hashes", []) or []
+            )
+            sift_sim = sift_result[1]
 
             color_sim = self.compare_color_histograms(
-                new_fingerprint.get("color_histogram"),
-                db_fingerprint.get("color_histogram")
+                new_fingerprint.get("color_histogram") or [],
+                db_fingerprint.get("color_histogram") or []
             )
 
             audio_sim, audio_status = self.compare_audio_fingerprints(
@@ -303,13 +374,30 @@ class EnhancedSimilarityDetector:
                 db_fingerprint.get("audio_fingerprint")
             )
 
-            # 融合
+            # 增强特征比较 (小波哈希, LBP, 边缘直方图)
+            enhanced_sim = {
+                "wavelet_hash": 0.0,
+                "lbp": 0.0,
+                "edge": 0.0
+            }
+            enhanced_comparison = self.compare_enhanced_features(new_fingerprint, db_fingerprint)
+            if enhanced_comparison.get("wavelet_hash"):
+                enhanced_sim["wavelet_hash"] = enhanced_comparison["wavelet_hash"].get("similarity", 0)
+            if enhanced_comparison.get("lbp"):
+                enhanced_sim["lbp"] = enhanced_comparison["lbp"].get("similarity", 0)
+            if enhanced_comparison.get("edge"):
+                enhanced_sim["edge"] = enhanced_comparison["edge"].get("similarity", 0)
+
+            # 融合 (使用可用特征的权重)
             overall = (
                 phash_sim * self.weights["phash"] +
                 dhash_sim * self.weights["dhash"] +
+                enhanced_sim["wavelet_hash"] * self.weights.get("wavelet_hash", 0.1) +
+                enhanced_sim["lbp"] * self.weights.get("lbp", 0.08) +
                 sift_sim * self.weights["sift"] +
                 color_sim * self.weights["color"] +
-                audio_sim * self.weights["audio"]
+                audio_sim * self.weights["audio"] +
+                enhanced_sim["edge"] * self.weights.get("edge", 0.05)
             )
 
             # 判定
@@ -325,6 +413,11 @@ class EnhancedSimilarityDetector:
                 ),
                 "audio_similarity": round(audio_sim, 2),
                 "audio_status": audio_status,
+                "enhanced_features": {
+                    "wavelet_hash": round(enhanced_sim["wavelet_hash"], 2),
+                    "lbp": round(enhanced_sim["lbp"], 2),
+                    "edge": round(enhanced_sim["edge"], 2),
+                },
                 "overall_similarity": round(overall, 2),
                 "is_match": is_match,
                 "match_reason": reason,

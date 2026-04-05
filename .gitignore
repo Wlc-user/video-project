@@ -44,3 +44,15 @@ npm-debug.log*
 # Temporary
 *.tmp
 *.temp
+
+# Test files
+test_*.py
+*_test.py
+pytest_cache/
+
+# CLIP vectors
+data/clip_vectors/
+
+# Fingerprints (personal data)
+data/fingerprints/*.json
+!data/fingerprints/.gitkeep

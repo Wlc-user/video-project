@@ -8,7 +8,7 @@ python-dotenv>=1.0.0
 bcrypt>=4.0.0
 PyJWT>=2.8.0
 stripe>=8.0.0
-alipay-sdk-python>=4.11.0
+alipay-sdk-python>=3.7.800
 python-dateutil>=2.8.0
 # 版权保护依赖
 opencv-python>=4.8.0
@@ -19,3 +19,10 @@ beautifulsoup4>=4.12.0
 # 音频指纹依赖（可选）
 librosa>=0.10.0
 soundfile>=0.12.0
+
+# 高并发优化依赖 (Linux/macOS)
+# uvloop>=0.19.0  # Windows 不支持，Linux/macOS 可安装
+httptools>=0.6.0
+gunicorn>=21.0.0
+redis>=5.0.0
+# pydantic-settings>=3.0.0  # 可选：更好的配置管理
