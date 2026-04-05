@@ -16,3 +16,6 @@ Pillow>=10.0.0
 imagehash>=4.3.1
 requests>=2.31.0
 beautifulsoup4>=4.12.0
+# 音频指纹依赖（可选）
+librosa>=0.10.0
+soundfile>=0.12.0
